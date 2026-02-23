@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+  <Transactions>
+    <Transaction>2026.02.23 11:49:51.082,=C:\Users\admin\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026.02.23 11:50:06.537,C:\Users\admin\Documents\Embarcadero\Studio\Projects\MailRelay.dproj=C:\Users\admin\Documents\Embarcadero\Studio\Projects\Project1.dproj</Transaction>
+    <Transaction>2026.02.23 11:50:39.331,E:\GIT PROJECTS\athexa_apex_relay\Unit1.dfm=C:\Users\admin\Documents\Embarcadero\Studio\Projects\Unit1.dfm</Transaction>
+    <Transaction>2026.02.23 11:50:39.331,E:\GIT PROJECTS\athexa_apex_relay\Unit1.pas=C:\Users\admin\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026.02.23 11:50:41.314,E:\GIT PROJECTS\athexa_apex_relay\MailRelay.dproj=C:\Users\admin\Documents\Embarcadero\Studio\Projects\MailRelay.dproj</Transaction>
+  </Transactions>
+</BorlandProject>
