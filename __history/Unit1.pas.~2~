@@ -1,0 +1,533 @@
+unit Unit1;
+
+interface
+
+uses
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Classes,
+  Vcl.Graphics,
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.Dialogs,
+  Vcl.StdCtrls,
+  Vcl.ExtCtrls,
+  Vcl.Clipbrd,
+  Relay.Config,
+  Relay.Log,
+  Relay.Queue,
+  Relay.Inbound,
+  Relay.Sender,
+  Relay.Types;
+
+type
+  TForm1 = class(TForm)
+  private
+    FConfig: TRelayConfig;
+    FLogger: TRelayLogger;
+    FQueue: TSpoolQueue;
+    FInbound: TRelayInboundServer;
+    FSenders: TRelaySenderManager;
+    FIniPath: string;
+    FUiTimer: TTimer;
+    FLastLogVersion: Int64;
+
+    GInbound: TGroupBox;
+    EdBindIP: TEdit;
+    EdBindPort: TEdit;
+    EdAllowedIP: TEdit;
+    EdMaxMessageMB: TEdit;
+    BtnStartListener: TButton;
+    BtnStopListener: TButton;
+    LblInboundStatusValue: TLabel;
+    LblInboundSessionsValue: TLabel;
+
+    GOutbound: TGroupBox;
+    EdOutHost: TEdit;
+    EdOutPort: TEdit;
+    CbTlsMode: TComboBox;
+    EdWorkers: TEdit;
+    BtnStartSenders: TButton;
+    BtnStopSenders: TButton;
+    BtnFlush: TButton;
+    LblSenderStatusValue: TLabel;
+    LblActiveSendersValue: TLabel;
+
+    GQueue: TGroupBox;
+    EdQueuePath: TEdit;
+    LblQueueSizeValue: TLabel;
+    LblInflightValue: TLabel;
+    LblDeferredValue: TLabel;
+    LblDeadValue: TLabel;
+    LblOldestValue: TLabel;
+    BtnPurgeDead: TButton;
+
+    GConfig: TGroupBox;
+    BtnSaveConfig: TButton;
+    BtnReloadConfig: TButton;
+    BtnRestoreDefaults: TButton;
+
+    GLogs: TGroupBox;
+    MemoLog: TMemo;
+    BtnClearLog: TButton;
+    BtnCopyLog: TButton;
+
+    function AddLabel(AParent: TWinControl; const ACaption: string; ALeft, ATop: Integer): TLabel;
+    function AddEdit(AParent: TWinControl; const AText: string; ALeft, ATop, AWidth: Integer): TEdit;
+    function AddButton(AParent: TWinControl; const ACaption: string; ALeft, ATop, AWidth: Integer;
+      AOnClick: TNotifyEvent): TButton;
+    procedure BuildUi;
+
+    procedure LoadConfigToUi;
+    function SaveUiToConfig: Boolean;
+    procedure ApplyConfigToServices;
+    procedure UpdateUi;
+    function ListenerStatusText: string;
+    function SenderStatusText: string;
+
+    procedure OnUiTimer(Sender: TObject);
+    procedure OnStartListener(Sender: TObject);
+    procedure OnStopListener(Sender: TObject);
+    procedure OnStartSenders(Sender: TObject);
+    procedure OnStopSenders(Sender: TObject);
+    procedure OnFlush(Sender: TObject);
+    procedure OnPurgeDead(Sender: TObject);
+    procedure OnClearLog(Sender: TObject);
+    procedure OnCopyLog(Sender: TObject);
+    procedure OnSaveConfig(Sender: TObject);
+    procedure OnReloadConfig(Sender: TObject);
+    procedure OnRestoreDefaults(Sender: TObject);
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+function TForm1.AddLabel(AParent: TWinControl; const ACaption: string; ALeft, ATop: Integer): TLabel;
+begin
+  Result := TLabel.Create(Self);
+  Result.Parent := AParent;
+  Result.Caption := ACaption;
+  Result.Left := ALeft;
+  Result.Top := ATop;
+end;
+
+function TForm1.AddEdit(AParent: TWinControl; const AText: string; ALeft, ATop, AWidth: Integer): TEdit;
+begin
+  Result := TEdit.Create(Self);
+  Result.Parent := AParent;
+  Result.Text := AText;
+  Result.Left := ALeft;
+  Result.Top := ATop;
+  Result.Width := AWidth;
+end;
+
+function TForm1.AddButton(AParent: TWinControl; const ACaption: string; ALeft, ATop, AWidth: Integer;
+  AOnClick: TNotifyEvent): TButton;
+begin
+  Result := TButton.Create(Self);
+  Result.Parent := AParent;
+  Result.Caption := ACaption;
+  Result.Left := ALeft;
+  Result.Top := ATop;
+  Result.Width := AWidth;
+  Result.OnClick := AOnClick;
+end;
+
+constructor TForm1.Create(AOwner: TComponent);
+var
+  LValidationError: string;
+begin
+  inherited Create(AOwner);
+  Position := poScreenCenter;
+  Width := 1180;
+  Height := 760;
+  Caption := 'MailRelay for Oracle APEX';
+
+  FIniPath := TRelayConfig.DefaultIniPath;
+  FConfig := TRelayConfig.Create;
+  FConfig.LoadFromIni(FIniPath);
+  if not FConfig.Validate(LValidationError) then
+    FConfig.SetDefaults;
+
+  FLogger := TRelayLogger.Create(FConfig.UILogTailLines);
+  FQueue := TSpoolQueue.Create(FConfig, FLogger);
+  FInbound := TRelayInboundServer.Create(FQueue, FLogger);
+  FSenders := TRelaySenderManager.Create(FQueue, FLogger);
+  ApplyConfigToServices;
+
+  BuildUi;
+  LoadConfigToUi;
+
+  FUiTimer := TTimer.Create(Self);
+  FUiTimer.Interval := FConfig.UIStatsRefreshMs;
+  FUiTimer.OnTimer := OnUiTimer;
+  FUiTimer.Enabled := True;
+
+  FLogger.Add('INFO', 'Application started');
+  UpdateUi;
+end;
+
+destructor TForm1.Destroy;
+begin
+  if Assigned(FUiTimer) then
+    FUiTimer.Enabled := False;
+
+  if Assigned(FSenders) then
+    FSenders.Stop;
+  if Assigned(FInbound) then
+    FInbound.Stop;
+
+  FSenders.Free;
+  FInbound.Free;
+  FQueue.Free;
+  FLogger.Free;
+  FConfig.Free;
+  inherited Destroy;
+end;
+
+procedure TForm1.BuildUi;
+begin
+  GInbound := TGroupBox.Create(Self);
+  GInbound.Parent := Self;
+  GInbound.Caption := 'Inbound (APEX -> Relay)';
+  GInbound.SetBounds(8, 8, 365, 220);
+
+  AddLabel(GInbound, 'Bind IP', 12, 28);
+  EdBindIP := AddEdit(GInbound, '', 150, 24, 190);
+  AddLabel(GInbound, 'Bind Port', 12, 58);
+  EdBindPort := AddEdit(GInbound, '', 150, 54, 190);
+  AddLabel(GInbound, 'Allowed Client IP', 12, 88);
+  EdAllowedIP := AddEdit(GInbound, '', 150, 84, 190);
+  AddLabel(GInbound, 'Max Message Size (MB)', 12, 118);
+  EdMaxMessageMB := AddEdit(GInbound, '', 150, 114, 190);
+
+  BtnStartListener := AddButton(GInbound, 'Start Listener', 12, 150, 150, OnStartListener);
+  BtnStopListener := AddButton(GInbound, 'Stop Listener', 190, 150, 150, OnStopListener);
+  AddLabel(GInbound, 'Status', 12, 188);
+  LblInboundStatusValue := AddLabel(GInbound, '-', 150, 188);
+  AddLabel(GInbound, 'Active Sessions', 12, 204);
+  LblInboundSessionsValue := AddLabel(GInbound, '0', 150, 204);
+
+  GOutbound := TGroupBox.Create(Self);
+  GOutbound.Parent := Self;
+  GOutbound.Caption := 'Outbound (Relay -> Smarthost)';
+  GOutbound.SetBounds(380, 8, 365, 220);
+
+  AddLabel(GOutbound, 'Remote Host', 12, 28);
+  EdOutHost := AddEdit(GOutbound, '', 150, 24, 190);
+  AddLabel(GOutbound, 'Remote Port', 12, 58);
+  EdOutPort := AddEdit(GOutbound, '', 150, 54, 190);
+  AddLabel(GOutbound, 'TLS/SSL Mode', 12, 88);
+  CbTlsMode := TComboBox.Create(Self);
+  CbTlsMode.Parent := GOutbound;
+  CbTlsMode.Left := 150;
+  CbTlsMode.Top := 84;
+  CbTlsMode.Width := 190;
+  CbTlsMode.Style := csDropDownList;
+  CbTlsMode.Items.Add('PLAIN');
+  CbTlsMode.Items.Add('STARTTLS');
+  CbTlsMode.Items.Add('SSL_IMPLICIT');
+
+  AddLabel(GOutbound, 'Workers (1..8)', 12, 118);
+  EdWorkers := AddEdit(GOutbound, '', 150, 114, 190);
+
+  BtnStartSenders := AddButton(GOutbound, 'Start Senders', 12, 150, 105, OnStartSenders);
+  BtnStopSenders := AddButton(GOutbound, 'Stop Senders', 125, 150, 105, OnStopSenders);
+  BtnFlush := AddButton(GOutbound, 'Flush Now', 238, 150, 102, OnFlush);
+  AddLabel(GOutbound, 'Status', 12, 188);
+  LblSenderStatusValue := AddLabel(GOutbound, '-', 150, 188);
+  AddLabel(GOutbound, 'Active Senders', 12, 204);
+  LblActiveSendersValue := AddLabel(GOutbound, '0', 150, 204);
+
+  GQueue := TGroupBox.Create(Self);
+  GQueue.Parent := Self;
+  GQueue.Caption := 'Queue';
+  GQueue.SetBounds(752, 8, 400, 220);
+
+  AddLabel(GQueue, 'Queue Path', 12, 28);
+  EdQueuePath := AddEdit(GQueue, '', 90, 24, 295);
+  AddLabel(GQueue, 'Queue Size', 12, 60);
+  LblQueueSizeValue := AddLabel(GQueue, '0', 120, 60);
+  AddLabel(GQueue, 'In-flight', 12, 82);
+  LblInflightValue := AddLabel(GQueue, '0', 120, 82);
+  AddLabel(GQueue, 'Deferred', 12, 104);
+  LblDeferredValue := AddLabel(GQueue, '0', 120, 104);
+  AddLabel(GQueue, 'Dead', 12, 126);
+  LblDeadValue := AddLabel(GQueue, '0', 120, 126);
+  AddLabel(GQueue, 'Oldest Age (sec)', 12, 148);
+  LblOldestValue := AddLabel(GQueue, '0', 120, 148);
+  BtnPurgeDead := AddButton(GQueue, 'Purge Dead-Letters', 12, 176, 160, OnPurgeDead);
+
+  GConfig := TGroupBox.Create(Self);
+  GConfig.Parent := Self;
+  GConfig.Caption := 'Config';
+  GConfig.SetBounds(752, 232, 400, 70);
+  BtnSaveConfig := AddButton(GConfig, 'Save', 12, 28, 90, OnSaveConfig);
+  BtnReloadConfig := AddButton(GConfig, 'Reload', 112, 28, 90, OnReloadConfig);
+  BtnRestoreDefaults := AddButton(GConfig, 'Restore Defaults', 212, 28, 130, OnRestoreDefaults);
+
+  GLogs := TGroupBox.Create(Self);
+  GLogs.Parent := Self;
+  GLogs.Caption := 'Logs';
+  GLogs.SetBounds(8, 236, 738, 470);
+  MemoLog := TMemo.Create(Self);
+  MemoLog.Parent := GLogs;
+  MemoLog.ReadOnly := True;
+  MemoLog.ScrollBars := ssVertical;
+  MemoLog.WordWrap := False;
+  MemoLog.Font.Name := 'Consolas';
+  MemoLog.SetBounds(12, 24, 710, 400);
+
+  BtnClearLog := AddButton(GLogs, 'Clear Log', 12, 432, 90, OnClearLog);
+  BtnCopyLog := AddButton(GLogs, 'Copy All', 110, 432, 90, OnCopyLog);
+end;
+
+procedure TForm1.LoadConfigToUi;
+begin
+  EdBindIP.Text := FConfig.InboundBindIP;
+  EdBindPort.Text := IntToStr(FConfig.InboundBindPort);
+  EdAllowedIP.Text := FConfig.InboundAllowedClientIP;
+  EdMaxMessageMB.Text := IntToStr(FConfig.InboundMaxMessageSizeMB);
+
+  EdOutHost.Text := FConfig.OutboundHost;
+  EdOutPort.Text := IntToStr(FConfig.OutboundPort);
+  CbTlsMode.ItemIndex := CbTlsMode.Items.IndexOf(RelayTlsModeToString(FConfig.OutboundTlsMode));
+  if CbTlsMode.ItemIndex < 0 then
+    CbTlsMode.ItemIndex := 1;
+  EdWorkers.Text := IntToStr(FConfig.OutboundWorkers);
+
+  EdQueuePath.Text := FConfig.QueuePath;
+end;
+
+function TForm1.SaveUiToConfig: Boolean;
+var
+  LInt: Integer;
+  LError: string;
+  LTlsMode: TRelayTlsMode;
+begin
+  Result := False;
+  FConfig.InboundBindIP := Trim(EdBindIP.Text);
+
+  if not TryStrToInt(Trim(EdBindPort.Text), LInt) then
+  begin
+    MessageDlg('Inbound Bind Port must be integer.', mtError, [mbOK], 0);
+    Exit;
+  end;
+  FConfig.InboundBindPort := LInt;
+
+  FConfig.InboundAllowedClientIP := Trim(EdAllowedIP.Text);
+
+  if not TryStrToInt(Trim(EdMaxMessageMB.Text), LInt) then
+  begin
+    MessageDlg('Inbound Max Message Size must be integer.', mtError, [mbOK], 0);
+    Exit;
+  end;
+  FConfig.InboundMaxMessageSizeMB := LInt;
+
+  FConfig.OutboundHost := Trim(EdOutHost.Text);
+
+  if not TryStrToInt(Trim(EdOutPort.Text), LInt) then
+  begin
+    MessageDlg('Outbound Port must be integer.', mtError, [mbOK], 0);
+    Exit;
+  end;
+  FConfig.OutboundPort := LInt;
+
+  if not RelayTlsModeFromString(CbTlsMode.Text, LTlsMode) then
+  begin
+    MessageDlg('TLS mode is invalid.', mtError, [mbOK], 0);
+    Exit;
+  end;
+  FConfig.OutboundTlsMode := LTlsMode;
+
+  if not TryStrToInt(Trim(EdWorkers.Text), LInt) then
+  begin
+    MessageDlg('Outbound workers must be integer.', mtError, [mbOK], 0);
+    Exit;
+  end;
+  FConfig.OutboundWorkers := LInt;
+
+  FConfig.QueuePath := Trim(EdQueuePath.Text);
+
+  if not FConfig.Validate(LError) then
+  begin
+    MessageDlg('Config validation failed:'#13#10 + LError, mtError, [mbOK], 0);
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+procedure TForm1.ApplyConfigToServices;
+begin
+  FLogger.SetMaxLines(FConfig.UILogTailLines);
+  FQueue.ApplyConfig(FConfig);
+  FInbound.ApplyConfig(FConfig);
+  FSenders.ApplyConfig(FConfig);
+  if Assigned(FUiTimer) then
+    FUiTimer.Interval := FConfig.UIStatsRefreshMs;
+end;
+
+function TForm1.ListenerStatusText: string;
+begin
+  case FInbound.Status of
+    lsStopped:
+      Result := 'STOPPED';
+    lsListening:
+      Result := 'LISTENING';
+    lsError:
+      Result := 'ERROR: ' + FInbound.LastError;
+  else
+    Result := 'UNKNOWN';
+  end;
+end;
+
+function TForm1.SenderStatusText: string;
+begin
+  case FSenders.Status of
+    ssStopped:
+      Result := 'STOPPED';
+    ssRunning:
+      Result := 'RUNNING';
+    ssError:
+      Result := 'ERROR: ' + FSenders.LastError;
+  else
+    Result := 'UNKNOWN';
+  end;
+end;
+
+procedure TForm1.UpdateUi;
+var
+  LStats: TQueueStats;
+  LVersion: Int64;
+begin
+  LStats := FQueue.Stats;
+  LblInboundStatusValue.Caption := ListenerStatusText;
+  LblInboundSessionsValue.Caption := IntToStr(FInbound.ActiveSessions);
+  LblSenderStatusValue.Caption := SenderStatusText;
+  LblActiveSendersValue.Caption := IntToStr(FSenders.ActiveSenders);
+  LblQueueSizeValue.Caption := IntToStr(LStats.TotalCount);
+  LblInflightValue.Caption := IntToStr(LStats.InFlightCount);
+  LblDeferredValue.Caption := IntToStr(LStats.DeferredCount);
+  LblDeadValue.Caption := IntToStr(LStats.DeadCount);
+  LblOldestValue.Caption := IntToStr(LStats.OldestAgeSec);
+
+  LVersion := FLogger.Version;
+  if LVersion <> FLastLogVersion then
+  begin
+    FLogger.Snapshot(MemoLog.Lines);
+    FLastLogVersion := LVersion;
+    MemoLog.SelStart := MemoLog.GetTextLen;
+    MemoLog.Perform(EM_SCROLLCARET, 0, 0);
+  end;
+end;
+
+procedure TForm1.OnUiTimer(Sender: TObject);
+begin
+  UpdateUi;
+end;
+
+procedure TForm1.OnStartListener(Sender: TObject);
+begin
+  if not SaveUiToConfig then
+    Exit;
+  ApplyConfigToServices;
+  if FInbound.Status = lsListening then
+    FInbound.Stop;
+  if not FInbound.Start then
+    MessageDlg('Cannot start listener:'#13#10 + FInbound.LastError, mtError, [mbOK], 0);
+  UpdateUi;
+end;
+
+procedure TForm1.OnStopListener(Sender: TObject);
+begin
+  FInbound.Stop;
+  UpdateUi;
+end;
+
+procedure TForm1.OnStartSenders(Sender: TObject);
+begin
+  if not SaveUiToConfig then
+    Exit;
+  ApplyConfigToServices;
+  if FSenders.Status = ssRunning then
+    FSenders.Stop;
+  if not FSenders.Start then
+    MessageDlg('Cannot start senders:'#13#10 + FSenders.LastError, mtError, [mbOK], 0);
+  UpdateUi;
+end;
+
+procedure TForm1.OnStopSenders(Sender: TObject);
+begin
+  FSenders.Stop;
+  UpdateUi;
+end;
+
+procedure TForm1.OnFlush(Sender: TObject);
+begin
+  FSenders.FlushNow;
+  UpdateUi;
+end;
+
+procedure TForm1.OnPurgeDead(Sender: TObject);
+var
+  LDeleted: Integer;
+begin
+  if MessageDlg('Purge all dead-letter files?', mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+  LDeleted := FQueue.PurgeDeadLetters;
+  FLogger.Add('QUEUE', Format('Dead-letter files removed: %d', [LDeleted]));
+  UpdateUi;
+end;
+
+procedure TForm1.OnClearLog(Sender: TObject);
+begin
+  FLogger.Clear;
+  UpdateUi;
+end;
+
+procedure TForm1.OnCopyLog(Sender: TObject);
+begin
+  Clipboard.AsText := MemoLog.Lines.Text;
+end;
+
+procedure TForm1.OnSaveConfig(Sender: TObject);
+begin
+  if not SaveUiToConfig then
+    Exit;
+  ApplyConfigToServices;
+  FConfig.SaveToIni(FIniPath);
+  FLogger.Add('CONFIG', 'Saved to ' + FIniPath);
+  UpdateUi;
+end;
+
+procedure TForm1.OnReloadConfig(Sender: TObject);
+begin
+  FConfig.SetDefaults;
+  FConfig.LoadFromIni(FIniPath);
+  LoadConfigToUi;
+  ApplyConfigToServices;
+  FLogger.Add('CONFIG', 'Reloaded from ' + FIniPath);
+  UpdateUi;
+end;
+
+procedure TForm1.OnRestoreDefaults(Sender: TObject);
+begin
+  if MessageDlg('Restore default config values?', mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+  FConfig.SetDefaults;
+  LoadConfigToUi;
+  ApplyConfigToServices;
+  FLogger.Add('CONFIG', 'Defaults restored');
+  UpdateUi;
+end;
+
+end.
