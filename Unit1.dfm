@@ -36,14 +36,18 @@ object Form1: TForm1
           Top = 0
           Width = 6
           Height = 192
+          Enabled = False
           MinSize = 220
+          Visible = False
         end
         object SplDashActions: TSplitter
           Left = 576
           Top = 0
           Width = 6
           Height = 192
+          Enabled = False
           MinSize = 180
+          Visible = False
         end
         object GbDashQueue: TGroupBox
           Left = 0
@@ -302,7 +306,9 @@ object Form1: TForm1
           Top = 0
           Width = 6
           Height = 379
+          Enabled = False
           MinSize = 260
+          Visible = False
           ExplicitHeight = 398
         end
         object SplDashOutbound: TSplitter
@@ -310,7 +316,9 @@ object Form1: TForm1
           Top = 0
           Width = 6
           Height = 379
+          Enabled = False
           MinSize = 260
+          Visible = False
           ExplicitHeight = 398
         end
         object GbDashInboundChart: TGroupBox
@@ -407,7 +415,9 @@ object Form1: TForm1
             Top = 0
             Width = 6
             Height = 500
+            Enabled = False
             MinSize = 360
+            Visible = False
           end
           object PnlConfigLeft: TPanel
             Left = 0
@@ -424,7 +434,9 @@ object Form1: TForm1
               Height = 6
               Cursor = crVSplit
               Align = alTop
+              Enabled = False
               MinSize = 170
+              Visible = False
             end
             object GbInbound: TGroupBox
               Left = 0
@@ -716,7 +728,9 @@ object Form1: TForm1
               Height = 6
               Cursor = crVSplit
               Align = alTop
+              Enabled = False
               MinSize = 150
+              Visible = False
             end
             object GbOutbound: TGroupBox
               Left = 0
@@ -973,14 +987,18 @@ object Form1: TForm1
             Top = 0
             Width = 6
             Height = 250
+            Enabled = False
             MinSize = 240
+            Visible = False
           end
           object SplConfigUI: TSplitter
             Left = 726
             Top = 0
             Width = 6
             Height = 250
+            Enabled = False
             MinSize = 240
+            Visible = False
           end
           object GbQueueConfig: TGroupBox
             Left = 0
