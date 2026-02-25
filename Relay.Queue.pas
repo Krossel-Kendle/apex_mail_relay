@@ -27,6 +27,15 @@ type
     EmlPath: string;
   end;
 
+  TQueueItemState = (qisNew, qisInFlight, qisDeferred, qisDead);
+
+  TQueueItemInfo = record
+    CreatedUtc: TDateTime;
+    MailFrom: string;
+    Recipients: TArray<string>;
+    State: TQueueItemState;
+  end;
+
   TSpoolQueue = class
   private
     FCritSec: TCriticalSection;
@@ -76,6 +85,7 @@ type
     function ForceDeferredNow: Integer;
 
     function Stats: TQueueStats;
+    function SnapshotItems(const AMaxItems: Integer = 5000): TArray<TQueueItemInfo>;
     function PurgeDeadLetters: Integer;
     property RootPath: string read FRootPath;
   end;
@@ -738,6 +748,55 @@ begin
       FLogger.Add('QUEUE', Format('Purged dead letters files=%d', [Result]));
   finally
     FCritSec.Release;
+  end;
+end;
+
+function TSpoolQueue.SnapshotItems(const AMaxItems: Integer): TArray<TQueueItemInfo>;
+var
+  LList: TList<TQueueItemInfo>;
+
+  function ReachedMax: Boolean;
+  begin
+    Result := (AMaxItems > 0) and (LList.Count >= AMaxItems);
+  end;
+
+  procedure AddFromDir(const ADir: string; const AState: TQueueItemState);
+  var
+    LJsonFiles: TArray<string>;
+    LJsonPath: string;
+    LMeta: TSpoolItem;
+    LInfo: TQueueItemInfo;
+  begin
+    LJsonFiles := GetDirectoryFilesSafe(ADir, '*.json');
+    for LJsonPath in LJsonFiles do
+    begin
+      if ReachedMax then
+        Exit;
+      if not ReadMeta(LJsonPath, LMeta) then
+        Continue;
+
+      LInfo.CreatedUtc := LMeta.CreatedUtc;
+      LInfo.MailFrom := LMeta.MailFrom;
+      LInfo.Recipients := Copy(LMeta.Recipients, 0, Length(LMeta.Recipients));
+      LInfo.State := AState;
+      LList.Add(LInfo);
+    end;
+  end;
+begin
+  LList := TList<TQueueItemInfo>.Create;
+  FCritSec.Acquire;
+  try
+    AddFromDir(FDirNew, qisNew);
+    if not ReachedMax then
+      AddFromDir(FDirInFlight, qisInFlight);
+    if not ReachedMax then
+      AddFromDir(FDirDeferred, qisDeferred);
+    if not ReachedMax then
+      AddFromDir(FDirDead, qisDead);
+    Result := LList.ToArray;
+  finally
+    FCritSec.Release;
+    LList.Free;
   end;
 end;
 

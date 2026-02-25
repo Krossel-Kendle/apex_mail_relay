@@ -36,6 +36,7 @@ type
     FActiveSessions: Integer;
     FReplyHost: string;
     FEnableDetailLogging: Boolean;
+    FRequireAuthCredentials: Boolean;
     FAuthUserEnc: string;
     FAuthPasswordEnc: string;
 
@@ -44,6 +45,7 @@ type
     function GetLastError: string;
     function GetActiveSessions: Integer;
     function DetailLoggingEnabled: Boolean;
+    function IsClientAllowed(const APeerIP: string): Boolean;
     function AuthRequired: Boolean;
     function TryGetConfiguredAuth(out AUser, APassword: string): Boolean;
     function VerifyLoginCredentials(const AUser, APassword: string): Boolean;
@@ -288,6 +290,7 @@ begin
   FMaxSessions := 20;
   FReplyHost := 'localhost';
   FEnableDetailLogging := False;
+  FRequireAuthCredentials := False;
   FAuthUserEnc := '';
   FAuthPasswordEnc := '';
   SetStatus(lsStopped);
@@ -358,10 +361,32 @@ function TRelayInboundServer.AuthRequired: Boolean;
 begin
   FCritSec.Acquire;
   try
-    Result := (Trim(FAuthUserEnc) <> '') and (Trim(FAuthPasswordEnc) <> '');
+    Result := FRequireAuthCredentials and (Trim(FAuthUserEnc) <> '') and (Trim(FAuthPasswordEnc) <> '');
   finally
     FCritSec.Release;
   end;
+end;
+
+function TRelayInboundServer.IsClientAllowed(const APeerIP: string): Boolean;
+var
+  LAllowedListText: string;
+  LAllowedList: TArray<string>;
+  LAllowedIP: string;
+begin
+  Result := False;
+
+  FCritSec.Acquire;
+  try
+    LAllowedListText := FAllowedClientIP;
+  finally
+    FCritSec.Release;
+  end;
+
+  LAllowedList := LAllowedListText.Replace(';', ',')
+    .Split([','], TStringSplitOptions.ExcludeEmpty);
+  for LAllowedIP in LAllowedList do
+    if SameText(Trim(LAllowedIP), Trim(APeerIP)) then
+      Exit(True);
 end;
 
 function TRelayInboundServer.TryGetConfiguredAuth(out AUser, APassword: string): Boolean;
@@ -758,6 +783,7 @@ begin
     FSessionIdleTimeoutMs := AConfig.InboundSessionIdleTimeoutSec * 1000;
     FCommandTimeoutMs := AConfig.InboundCommandTimeoutSec * 1000;
     FEnableDetailLogging := AConfig.UIDetailLoggingEnabled;
+    FRequireAuthCredentials := AConfig.InboundRequireAuthCredentials;
     FAuthUserEnc := AConfig.InboundAuthUserEnc;
     FAuthPasswordEnc := AConfig.InboundAuthPasswordEnc;
   finally
@@ -899,7 +925,7 @@ begin
   try
     LPeerIP := AContext.Binding.PeerIP;
 
-    if not SameText(LPeerIP, FAllowedClientIP) then
+    if not IsClientAllowed(LPeerIP) then
     begin
       SendReply(AContext, '554 5.7.1 Access denied');
       if Assigned(FLogger) then

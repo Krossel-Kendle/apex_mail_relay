@@ -1,0 +1,974 @@
+﻿unit Unit1;
+
+interface
+
+uses
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Classes,
+  System.DateUtils,
+  System.Math,
+  System.Generics.Collections,
+  System.UITypes,
+  Vcl.Graphics,
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.Dialogs,
+  Vcl.StdCtrls,
+  Vcl.ExtCtrls,
+  Vcl.ComCtrls,
+  Vcl.Clipbrd,
+  VclTee.TeEngine,
+  VclTee.TeeProcs,
+  VclTee.Chart,
+  VclTee.Series,
+  Relay.Config,
+  Relay.Log,
+  Relay.Queue,
+  Relay.Inbound,
+  Relay.Sender,
+  Relay.Types,
+  Relay.I18n;
+
+type
+  TForm1 = class(TForm)
+    PageMain: TPageControl;
+    TabDashboard: TTabSheet;
+    TabConfig: TTabSheet;
+    TabLog: TTabSheet;
+    PnlDashTop: TPanel;
+    GbDashQueue: TGroupBox;
+    LblQueueSizeCaption: TLabel;
+    LblQueueSizeValue: TLabel;
+    LblInflightCaption: TLabel;
+    LblInflightValue: TLabel;
+    LblDeferredCaption: TLabel;
+    LblDeferredValue: TLabel;
+    LblDeadCaption: TLabel;
+    LblDeadValue: TLabel;
+    LblOldestCaption: TLabel;
+    LblOldestValue: TLabel;
+    GbDashActions: TGroupBox;
+    BtnPurgeDead: TButton;
+    BtnFlush: TButton;
+    BtnStartListener: TButton;
+    BtnStopListener: TButton;
+    BtnStartSenders: TButton;
+    BtnStopSenders: TButton;
+    GbDashRelayStatus: TGroupBox;
+    LblListenerStatusCaption: TLabel;
+    LblListenerStatusValue: TLabel;
+    LblSendersStatusCaption: TLabel;
+    LblSendersStatusValue: TLabel;
+    LblListenerSessionsCaption: TLabel;
+    LblListenerSessionsValue: TLabel;
+    LblActiveSendersCaption: TLabel;
+    LblActiveSendersValue: TLabel;
+    GbDashHourly: TGroupBox;
+    ChartHourly: TChart;
+    PnlDashPies: TPanel;
+    GbDashInboundChart: TGroupBox;
+    ChartInbound: TChart;
+    GbDashOutboundChart: TGroupBox;
+    ChartOutbound: TChart;
+    GbDashProblemsChart: TGroupBox;
+    ChartProblems: TChart;
+    ScrollConfig: TScrollBox;
+    PnlConfigTop: TPanel;
+    PnlConfigLeft: TPanel;
+    GbInbound: TGroupBox;
+    LblBindIP: TLabel;
+    EdBindIP: TEdit;
+    LblBindPort: TLabel;
+    EdBindPort: TEdit;
+    LblAllowedIP: TLabel;
+    EdAllowedIP: TEdit;
+    LblMaxMessageMB: TLabel;
+    EdMaxMessageMB: TEdit;
+    GbInboundAuth: TGroupBox;
+    LblInboundAuthUser: TLabel;
+    EdInboundAuthUser: TEdit;
+    LblInboundAuthPassword: TLabel;
+    EdInboundAuthPassword: TEdit;
+    CbRequireInboundAuth: TCheckBox;
+    BtnResetInboundAuth: TButton;
+    PnlConfigRight: TPanel;
+    GbOutbound: TGroupBox;
+    LblOutHost: TLabel;
+    EdOutHost: TEdit;
+    LblOutPort: TLabel;
+    EdOutPort: TEdit;
+    LblTlsMode: TLabel;
+    CbTlsMode: TComboBox;
+    LblWorkers: TLabel;
+    EdWorkers: TEdit;
+    GbOutboundAuth: TGroupBox;
+    LblOutboundAuthUser: TLabel;
+    EdOutboundAuthUser: TEdit;
+    LblOutboundAuthPassword: TLabel;
+    EdOutboundAuthPassword: TEdit;
+    PnlConfigBottom: TPanel;
+    GbQueueConfig: TGroupBox;
+    LblQueuePathCaption: TLabel;
+    EdQueuePath: TEdit;
+    LblQueueMaxItemsCaption: TLabel;
+    EdQueueMaxItems: TEdit;
+    LblQueueMaxBytesCaption: TLabel;
+    EdQueueMaxBytesMB: TEdit;
+    LblQueueStaleCaption: TLabel;
+    EdQueueInFlightStaleSec: TEdit;
+    GbUiConfig: TGroupBox;
+    LblLanguageCaption: TLabel;
+    CbLanguage: TComboBox;
+    CbDetailLogging: TCheckBox;
+    LblLogTailLinesCaption: TLabel;
+    EdLogTailLines: TEdit;
+    LblStatsRefreshCaption: TLabel;
+    EdStatsRefreshMs: TEdit;
+    GbRetry: TGroupBox;
+    LblRetryAttemptsCaption: TLabel;
+    EdRetryMaxAttempts: TEdit;
+    LblRetryBaseDelayCaption: TLabel;
+    EdRetryBaseDelaySec: TEdit;
+    LblRetryMaxDelayCaption: TLabel;
+    EdRetryMaxDelaySec: TEdit;
+    LblRetryJitterCaption: TLabel;
+    EdRetryJitterPct: TEdit;
+    PnlConfigButtons: TPanel;
+    BtnSaveConfig: TButton;
+    BtnRestoreDefaults: TButton;
+    PnlLogTop: TPanel;
+    BtnClearLog: TButton;
+    BtnCopyLog: TButton;
+    MemoLog: TMemo;
+    procedure OnStartListener(Sender: TObject);
+    procedure OnStopListener(Sender: TObject);
+    procedure OnStartSenders(Sender: TObject);
+    procedure OnStopSenders(Sender: TObject);
+    procedure OnFlush(Sender: TObject);
+    procedure OnPurgeDead(Sender: TObject);
+    procedure OnSaveConfig(Sender: TObject);
+    procedure OnRestoreDefaults(Sender: TObject);
+    procedure OnResetInboundAuth(Sender: TObject);
+    procedure OnClearLog(Sender: TObject);
+    procedure OnCopyLog(Sender: TObject);
+  private
+    FConfig: TRelayConfig;
+    FLogger: TRelayLogger;
+    FQueue: TSpoolQueue;
+    FInbound: TRelayInboundServer;
+    FSenders: TRelaySenderManager;
+    FIniPath: string;
+    FUiTimer: TTimer;
+    FLastLogVersion: Int64;
+    FCurrentLanguage: TRelayLanguage;
+
+    SeriesHourly: TBarSeries;
+    SeriesOutbound: TPieSeries;
+    SeriesInbound: TPieSeries;
+    SeriesProblems: TPieSeries;
+
+    function Tx(const AKey: string): string;
+    procedure SetHint(AControl: TControl; const AHintText: string);
+    procedure SetLanguageFromConfig;
+    function SelectedLanguageCode: string;
+    procedure InitializeCharts;
+    procedure ApplyLanguage;
+    procedure LoadConfigToUi;
+    function SaveUiToConfig: Boolean;
+    procedure ApplyConfigToServices;
+    function ListenerStatusText: string;
+    function SenderStatusText: string;
+    procedure PersistRuntimeState;
+    procedure AutoStartByState;
+    procedure UpdateUi;
+    procedure RefreshDashboardCharts;
+    function ExtractDomain(const AAddress: string): string;
+    procedure SetStatusValue(ALabel: TLabel; const AText: string; ARunning, AError: Boolean);
+
+    procedure OnUiTimer(Sender: TObject);
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+function TForm1.Tx(const AKey: string): string;
+begin
+  Result := Tr(FCurrentLanguage, AKey);
+end;
+
+procedure TForm1.SetHint(AControl: TControl; const AHintText: string);
+begin
+  if not Assigned(AControl) then
+    Exit;
+  AControl.ShowHint := True;
+  AControl.Hint := AHintText;
+end;
+
+procedure TForm1.SetLanguageFromConfig;
+begin
+  if not TryRelayLanguageFromCode(FConfig.UILanguage, FCurrentLanguage) then
+  begin
+    FCurrentLanguage := rlEn;
+    FConfig.UILanguage := 'EN';
+  end;
+end;
+
+function TForm1.SelectedLanguageCode: string;
+begin
+  case CbLanguage.ItemIndex of
+    1:
+      Result := 'RU';
+    2:
+      Result := 'ID';
+  else
+    Result := 'EN';
+  end;
+end;
+
+constructor TForm1.Create(AOwner: TComponent);
+var
+  LValidationError: string;
+begin
+  inherited Create(AOwner);
+  Application.ShowHint := True;
+  ShowHint := True;
+
+  FIniPath := TRelayConfig.DefaultIniPath;
+  FConfig := TRelayConfig.Create;
+  FConfig.LoadFromIni(FIniPath);
+  if not FConfig.Validate(LValidationError) then
+    FConfig.SetDefaults;
+  SetLanguageFromConfig;
+
+  FLogger := TRelayLogger.Create(FConfig.UILogTailLines);
+  FQueue := TSpoolQueue.Create(FConfig, FLogger);
+  FInbound := TRelayInboundServer.Create(FQueue, FLogger);
+  FSenders := TRelaySenderManager.Create(FQueue, FLogger);
+  ApplyConfigToServices;
+
+  InitializeCharts;
+  LoadConfigToUi;
+  ApplyLanguage;
+
+  FUiTimer := TTimer.Create(Self);
+  FUiTimer.Interval := FConfig.UIStatsRefreshMs;
+  FUiTimer.OnTimer := OnUiTimer;
+  FUiTimer.Enabled := True;
+
+  FLogger.Add('CONFIG', 'Using INI: ' + FIniPath);
+  FLogger.Add('INFO', 'Application started');
+
+  AutoStartByState;
+  UpdateUi;
+end;
+
+destructor TForm1.Destroy;
+begin
+  if Assigned(FUiTimer) then
+    FUiTimer.Enabled := False;
+
+  PersistRuntimeState;
+
+  if Assigned(FSenders) then
+    FSenders.Stop;
+  if Assigned(FInbound) then
+    FInbound.Stop;
+
+  FSenders.Free;
+  FInbound.Free;
+  FQueue.Free;
+  FLogger.Free;
+  FConfig.Free;
+  inherited Destroy;
+end;
+
+procedure TForm1.InitializeCharts;
+begin
+  ChartHourly.View3D := False;
+  ChartHourly.Legend.Visible := False;
+  ChartHourly.Title.Text.Clear;
+
+  SeriesHourly := TBarSeries.Create(Self);
+  SeriesHourly.ParentChart := ChartHourly;
+  SeriesHourly.Marks.Visible := False;
+  SeriesHourly.BarWidthPercent := 70;
+
+  ChartInbound.View3D := False;
+  ChartInbound.Title.Text.Clear;
+  SeriesInbound := TPieSeries.Create(Self);
+  SeriesInbound.ParentChart := ChartInbound;
+  SeriesInbound.Marks.Style := smsLabelPercent;
+
+  ChartOutbound.View3D := False;
+  ChartOutbound.Title.Text.Clear;
+  SeriesOutbound := TPieSeries.Create(Self);
+  SeriesOutbound.ParentChart := ChartOutbound;
+  SeriesOutbound.Marks.Style := smsLabelPercent;
+
+  ChartProblems.View3D := False;
+  ChartProblems.Title.Text.Clear;
+  SeriesProblems := TPieSeries.Create(Self);
+  SeriesProblems.ParentChart := ChartProblems;
+  SeriesProblems.Marks.Style := smsLabelPercent;
+end;
+
+procedure TForm1.ApplyLanguage;
+var
+  LLang: TRelayLanguage;
+begin
+  Caption := Tx('app_title');
+
+  TabDashboard.Caption := Tx('tab_dashboard');
+  TabConfig.Caption := Tx('tab_config');
+  TabLog.Caption := Tx('tab_log');
+
+  GbDashQueue.Caption := Tx('group_dash_queue');
+  GbDashActions.Caption := Tx('group_dash_actions');
+  GbDashRelayStatus.Caption := Tx('group_dash_relay_status');
+  GbDashHourly.Caption := Tx('group_dash_hourly');
+  GbDashInboundChart.Caption := Tx('group_dash_inbound_distribution');
+  GbDashOutboundChart.Caption := Tx('group_dash_outbound_distribution');
+  GbDashProblemsChart.Caption := Tx('group_dash_problematic');
+
+  LblQueueSizeCaption.Caption := Tx('queue_size');
+  LblInflightCaption.Caption := Tx('inflight');
+  LblDeferredCaption.Caption := Tx('deferred');
+  LblDeadCaption.Caption := Tx('dead');
+  LblOldestCaption.Caption := Tx('oldest_age');
+
+  BtnPurgeDead.Caption := Tx('btn_purge_dead');
+  BtnFlush.Caption := Tx('btn_flush');
+  BtnStartListener.Caption := Tx('btn_start_listener');
+  BtnStopListener.Caption := Tx('btn_stop_listener');
+  BtnStartSenders.Caption := Tx('btn_start_senders');
+  BtnStopSenders.Caption := Tx('btn_stop_senders');
+
+  LblListenerStatusCaption.Caption := Tx('relay_listener_status');
+  LblSendersStatusCaption.Caption := Tx('relay_senders_status');
+  LblListenerSessionsCaption.Caption := Tx('relay_active_listener_sessions');
+  LblActiveSendersCaption.Caption := Tx('relay_active_senders');
+
+  GbInbound.Caption := Tx('group_inbound_config');
+  GbInboundAuth.Caption := Tx('group_inbound_auth');
+  GbOutbound.Caption := Tx('group_outbound_config');
+  GbOutboundAuth.Caption := Tx('group_outbound_auth');
+  GbQueueConfig.Caption := Tx('group_queue_config');
+  GbUiConfig.Caption := Tx('group_ui_config');
+  GbRetry.Caption := Tx('group_retry_config');
+
+  LblBindIP.Caption := Tx('bind_ip');
+  LblBindPort.Caption := Tx('bind_port');
+  LblAllowedIP.Caption := Tx('allowed_ip');
+  LblMaxMessageMB.Caption := Tx('max_message_mb');
+
+  LblInboundAuthUser.Caption := Tx('inbound_auth_username');
+  LblInboundAuthPassword.Caption := Tx('inbound_auth_password');
+  CbRequireInboundAuth.Caption := Tx('inbound_require_auth');
+  BtnResetInboundAuth.Caption := Tx('btn_reset');
+
+  LblOutHost.Caption := Tx('remote_host');
+  LblOutPort.Caption := Tx('remote_port');
+  LblTlsMode.Caption := Tx('tls_mode');
+  LblWorkers.Caption := Tx('workers');
+
+  LblOutboundAuthUser.Caption := Tx('outbound_auth_username');
+  LblOutboundAuthPassword.Caption := Tx('outbound_auth_password');
+
+  LblQueuePathCaption.Caption := Tx('queue_path');
+  LblQueueMaxItemsCaption.Caption := Tx('queue_max_items');
+  LblQueueMaxBytesCaption.Caption := Tx('queue_max_bytes_mb');
+  LblQueueStaleCaption.Caption := Tx('queue_inflight_stale_sec');
+
+  LblLanguageCaption.Caption := Tx('language');
+  CbDetailLogging.Caption := Tx('detail_logging');
+  LblLogTailLinesCaption.Caption := Tx('log_tail_lines');
+  LblStatsRefreshCaption.Caption := Tx('stats_refresh_ms');
+
+  LblRetryAttemptsCaption.Caption := Tx('retry_max_attempts');
+  LblRetryBaseDelayCaption.Caption := Tx('retry_base_delay_sec');
+  LblRetryMaxDelayCaption.Caption := Tx('retry_max_delay_sec');
+  LblRetryJitterCaption.Caption := Tx('retry_jitter_pct');
+
+  BtnSaveConfig.Caption := Tx('btn_save');
+  BtnRestoreDefaults.Caption := Tx('btn_restore_defaults');
+
+  BtnClearLog.Caption := Tx('btn_clear_log');
+  BtnCopyLog.Caption := Tx('btn_copy_log');
+
+  ChartHourly.Title.Text.Text := Tx('chart_hourly_title');
+  ChartInbound.Title.Text.Text := Tx('chart_inbound_title');
+  ChartOutbound.Title.Text.Text := Tx('chart_outbound_title');
+  ChartProblems.Title.Text.Text := Tx('chart_problem_title');
+
+  CbLanguage.Items.BeginUpdate;
+  try
+    CbLanguage.Items.Clear;
+    CbLanguage.Items.Add(RelayLanguageDisplayName(rlEn));
+    CbLanguage.Items.Add(RelayLanguageDisplayName(rlRu));
+    CbLanguage.Items.Add(RelayLanguageDisplayName(rlId));
+    if TryRelayLanguageFromCode(FConfig.UILanguage, LLang) then
+      CbLanguage.ItemIndex := Ord(LLang)
+    else
+      CbLanguage.ItemIndex := 0;
+  finally
+    CbLanguage.Items.EndUpdate;
+  end;
+
+  SetHint(EdBindIP, Tx('hint_bind_ip'));
+  SetHint(EdBindPort, Tx('hint_bind_port'));
+  SetHint(EdAllowedIP, Tx('hint_allowed_ip'));
+  SetHint(EdMaxMessageMB, Tx('hint_max_message_mb'));
+
+  SetHint(EdInboundAuthUser, Tx('hint_inbound_auth_user'));
+  SetHint(EdInboundAuthPassword, Tx('hint_inbound_auth_password'));
+  SetHint(CbRequireInboundAuth, Tx('hint_inbound_require_auth'));
+  SetHint(BtnResetInboundAuth, Tx('hint_reset_inbound_auth'));
+
+  SetHint(EdOutHost, Tx('hint_remote_host'));
+  SetHint(EdOutPort, Tx('hint_remote_port'));
+  SetHint(CbTlsMode, Tx('hint_tls_mode'));
+  SetHint(EdWorkers, Tx('hint_workers'));
+
+  SetHint(EdOutboundAuthUser, Tx('hint_outbound_auth_user'));
+  SetHint(EdOutboundAuthPassword, Tx('hint_outbound_auth_password'));
+
+  SetHint(EdQueuePath, Tx('hint_queue_path'));
+  SetHint(EdQueueMaxItems, Tx('hint_queue_max_items'));
+  SetHint(EdQueueMaxBytesMB, Tx('hint_queue_max_bytes_mb'));
+  SetHint(EdQueueInFlightStaleSec, Tx('hint_queue_inflight_stale_sec'));
+
+  SetHint(CbLanguage, Tx('hint_language'));
+  SetHint(CbDetailLogging, Tx('hint_detail_logging'));
+  SetHint(EdLogTailLines, Tx('hint_log_tail_lines'));
+  SetHint(EdStatsRefreshMs, Tx('hint_stats_refresh_ms'));
+
+  SetHint(EdRetryMaxAttempts, Tx('hint_retry_max_attempts'));
+  SetHint(EdRetryBaseDelaySec, Tx('hint_retry_base_delay_sec'));
+  SetHint(EdRetryMaxDelaySec, Tx('hint_retry_max_delay_sec'));
+  SetHint(EdRetryJitterPct, Tx('hint_retry_jitter_pct'));
+
+  SetHint(BtnFlush, Tx('hint_flush'));
+  SetHint(BtnPurgeDead, Tx('hint_purge_dead'));
+end;
+
+procedure TForm1.LoadConfigToUi;
+var
+  LLang: TRelayLanguage;
+  LUser: string;
+  LPassword: string;
+begin
+  EdBindIP.Text := FConfig.InboundBindIP;
+  EdBindPort.Text := IntToStr(FConfig.InboundBindPort);
+  EdAllowedIP.Text := FConfig.InboundAllowedClientIP;
+  EdMaxMessageMB.Text := IntToStr(FConfig.InboundMaxMessageSizeMB);
+
+  EdOutHost.Text := FConfig.OutboundHost;
+  EdOutPort.Text := IntToStr(FConfig.OutboundPort);
+  CbTlsMode.ItemIndex := CbTlsMode.Items.IndexOf(RelayTlsModeToString(FConfig.OutboundTlsMode));
+  if CbTlsMode.ItemIndex < 0 then
+    CbTlsMode.ItemIndex := 1;
+  EdWorkers.Text := IntToStr(FConfig.OutboundWorkers);
+
+  EdQueuePath.Text := FConfig.QueuePath;
+  EdQueueMaxItems.Text := IntToStr(FConfig.QueueMaxItems);
+  EdQueueMaxBytesMB.Text := IntToStr(FConfig.QueueMaxBytesMB);
+  EdQueueInFlightStaleSec.Text := IntToStr(FConfig.QueueInFlightStaleSec);
+
+  EdLogTailLines.Text := IntToStr(FConfig.UILogTailLines);
+  EdStatsRefreshMs.Text := IntToStr(FConfig.UIStatsRefreshMs);
+  CbDetailLogging.Checked := FConfig.UIDetailLoggingEnabled;
+
+  EdRetryMaxAttempts.Text := IntToStr(FConfig.RetryMaxAttempts);
+  EdRetryBaseDelaySec.Text := IntToStr(FConfig.RetryBaseDelaySec);
+  EdRetryMaxDelaySec.Text := IntToStr(FConfig.RetryMaxDelaySec);
+  EdRetryJitterPct.Text := IntToStr(FConfig.RetryJitterPct);
+
+  if TryRelayLanguageFromCode(FConfig.UILanguage, LLang) then
+    CbLanguage.ItemIndex := Ord(LLang)
+  else
+    CbLanguage.ItemIndex := 0;
+
+  CbRequireInboundAuth.Checked := FConfig.InboundRequireAuthCredentials;
+
+  try
+    FConfig.GetInboundAuthPlain(LUser, LPassword);
+  except
+    LUser := '';
+    LPassword := '';
+  end;
+  EdInboundAuthUser.Text := LUser;
+  EdInboundAuthPassword.Text := LPassword;
+
+  try
+    FConfig.GetOutboundAuthPlain(LUser, LPassword);
+  except
+    LUser := '';
+    LPassword := '';
+  end;
+  EdOutboundAuthUser.Text := LUser;
+  EdOutboundAuthPassword.Text := LPassword;
+end;
+
+function TForm1.SaveUiToConfig: Boolean;
+var
+  LInt: Integer;
+  LError: string;
+  LTlsMode: TRelayTlsMode;
+  function ReadInt(AEdit: TEdit; const AFieldCaption: string; out AValue: Integer): Boolean;
+  begin
+    Result := TryStrToInt(Trim(AEdit.Text), AValue);
+    if Result then
+      Exit;
+    MessageDlg(Format(Tx('msg_field_int'), [AFieldCaption]), mtError, [mbOK], 0);
+  end;
+begin
+  Result := False;
+
+  FConfig.InboundBindIP := Trim(EdBindIP.Text);
+  if not ReadInt(EdBindPort, LblBindPort.Caption, LInt) then
+    Exit;
+  FConfig.InboundBindPort := LInt;
+
+  FConfig.InboundAllowedClientIP := Trim(EdAllowedIP.Text);
+  if not ReadInt(EdMaxMessageMB, LblMaxMessageMB.Caption, LInt) then
+    Exit;
+  FConfig.InboundMaxMessageSizeMB := LInt;
+
+  FConfig.InboundRequireAuthCredentials := CbRequireInboundAuth.Checked;
+  FConfig.SetInboundAuthPlain(Trim(EdInboundAuthUser.Text), Trim(EdInboundAuthPassword.Text));
+
+  FConfig.OutboundHost := Trim(EdOutHost.Text);
+  if not ReadInt(EdOutPort, LblOutPort.Caption, LInt) then
+    Exit;
+  FConfig.OutboundPort := LInt;
+
+  if not RelayTlsModeFromString(CbTlsMode.Text, LTlsMode) then
+  begin
+    MessageDlg(Tx('msg_tls_invalid'), mtError, [mbOK], 0);
+    Exit;
+  end;
+  FConfig.OutboundTlsMode := LTlsMode;
+
+  if not ReadInt(EdWorkers, LblWorkers.Caption, LInt) then
+    Exit;
+  FConfig.OutboundWorkers := LInt;
+  FConfig.SetOutboundAuthPlain(Trim(EdOutboundAuthUser.Text), Trim(EdOutboundAuthPassword.Text));
+
+  FConfig.QueuePath := Trim(EdQueuePath.Text);
+  if not ReadInt(EdQueueMaxItems, LblQueueMaxItemsCaption.Caption, LInt) then
+    Exit;
+  FConfig.QueueMaxItems := LInt;
+  if not ReadInt(EdQueueMaxBytesMB, LblQueueMaxBytesCaption.Caption, LInt) then
+    Exit;
+  FConfig.QueueMaxBytesMB := LInt;
+  if not ReadInt(EdQueueInFlightStaleSec, LblQueueStaleCaption.Caption, LInt) then
+    Exit;
+  FConfig.QueueInFlightStaleSec := LInt;
+
+  if not ReadInt(EdRetryMaxAttempts, LblRetryAttemptsCaption.Caption, LInt) then
+    Exit;
+  FConfig.RetryMaxAttempts := LInt;
+  if not ReadInt(EdRetryBaseDelaySec, LblRetryBaseDelayCaption.Caption, LInt) then
+    Exit;
+  FConfig.RetryBaseDelaySec := LInt;
+  if not ReadInt(EdRetryMaxDelaySec, LblRetryMaxDelayCaption.Caption, LInt) then
+    Exit;
+  FConfig.RetryMaxDelaySec := LInt;
+  if not ReadInt(EdRetryJitterPct, LblRetryJitterCaption.Caption, LInt) then
+    Exit;
+  FConfig.RetryJitterPct := LInt;
+
+  if not ReadInt(EdLogTailLines, LblLogTailLinesCaption.Caption, LInt) then
+    Exit;
+  FConfig.UILogTailLines := LInt;
+  if not ReadInt(EdStatsRefreshMs, LblStatsRefreshCaption.Caption, LInt) then
+    Exit;
+  FConfig.UIStatsRefreshMs := LInt;
+
+  FConfig.UILanguage := SelectedLanguageCode;
+  FConfig.UIDetailLoggingEnabled := CbDetailLogging.Checked;
+
+  if not FConfig.Validate(LError) then
+  begin
+    MessageDlg(Tx('msg_config_invalid') + sLineBreak + LError, mtError, [mbOK], 0);
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+procedure TForm1.ApplyConfigToServices;
+begin
+  FLogger.SetMaxLines(FConfig.UILogTailLines);
+  FQueue.ApplyConfig(FConfig);
+  FInbound.ApplyConfig(FConfig);
+  FSenders.ApplyConfig(FConfig);
+  if Assigned(FUiTimer) then
+    FUiTimer.Interval := FConfig.UIStatsRefreshMs;
+end;
+
+function TForm1.ListenerStatusText: string;
+begin
+  case FInbound.Status of
+    lsStopped:
+      Result := Tx('state_stopped');
+    lsListening:
+      Result := Tx('state_listening');
+    lsError:
+      Result := Tx('state_error');
+  else
+    Result := Tx('state_unknown');
+  end;
+end;
+
+function TForm1.SenderStatusText: string;
+begin
+  case FSenders.Status of
+    ssStopped:
+      Result := Tx('state_stopped');
+    ssRunning:
+      Result := Tx('state_running');
+    ssError:
+      Result := Tx('state_error');
+  else
+    Result := Tx('state_unknown');
+  end;
+end;
+
+procedure TForm1.PersistRuntimeState;
+begin
+  if not Assigned(FConfig) then
+    Exit;
+  FConfig.StateListenerStarted := Assigned(FInbound) and (FInbound.Status = lsListening);
+  FConfig.StateSendersStarted := Assigned(FSenders) and (FSenders.Status = ssRunning);
+  FConfig.SaveToIni(FIniPath);
+end;
+
+procedure TForm1.AutoStartByState;
+begin
+  if FConfig.StateListenerStarted then
+  begin
+    if not FInbound.Start then
+      FLogger.Add('ERROR', 'Autostart listener failed: ' + FInbound.LastError);
+  end;
+
+  if FConfig.StateSendersStarted then
+  begin
+    if not FSenders.Start then
+      FLogger.Add('ERROR', 'Autostart senders failed: ' + FSenders.LastError);
+  end;
+end;
+
+procedure TForm1.SetStatusValue(ALabel: TLabel; const AText: string; ARunning, AError: Boolean);
+begin
+  ALabel.Caption := AText;
+  ALabel.Font.Style := [fsBold];
+  if AError then
+    ALabel.Font.Color := clRed
+  else if ARunning then
+    ALabel.Font.Color := clGreen
+  else
+    ALabel.Font.Color := clRed;
+end;
+
+function TForm1.ExtractDomain(const AAddress: string): string;
+var
+  LPos: Integer;
+  LAddress: string;
+begin
+  LAddress := Trim(AAddress);
+  LPos := LastDelimiter('@', LAddress);
+  if (LPos > 0) and (LPos < Length(LAddress)) then
+    Result := LowerCase(Copy(LAddress, LPos + 1, MaxInt))
+  else
+    Result := Tx('chart_unknown');
+end;
+
+procedure TForm1.RefreshDashboardCharts;
+var
+  LItems: TArray<TQueueItemInfo>;
+  LItem: TQueueItemInfo;
+  LHourBuckets: array[0..23] of Integer;
+  LNowLocal: TDateTime;
+  LCreatedLocal: TDateTime;
+  LHoursAgo: Integer;
+  I: Integer;
+  LInboundMap: TDictionary<string, Integer>;
+  LOutboundMap: TDictionary<string, Integer>;
+  LPair: TPair<string, Integer>;
+  LRecipient: string;
+  LKey: string;
+  LStats: TQueueStats;
+  LTotal: Integer;
+  LProblematic: Integer;
+  procedure AddCount(AMap: TDictionary<string, Integer>; const AKey: string);
+  var
+    LCount: Integer;
+  begin
+    if not AMap.TryGetValue(AKey, LCount) then
+      LCount := 0;
+    AMap.AddOrSetValue(AKey, LCount + 1);
+  end;
+begin
+  if not Assigned(SeriesHourly) then
+    Exit;
+
+  FillChar(LHourBuckets, SizeOf(LHourBuckets), 0);
+  LNowLocal := Now;
+  LItems := FQueue.SnapshotItems(5000);
+
+  LInboundMap := TDictionary<string, Integer>.Create;
+  LOutboundMap := TDictionary<string, Integer>.Create;
+  try
+    for LItem in LItems do
+    begin
+      LCreatedLocal := TTimeZone.Local.ToLocalTime(LItem.CreatedUtc);
+      LHoursAgo := Trunc((LNowLocal - LCreatedLocal) * 24);
+      if (LHoursAgo >= 0) and (LHoursAgo < 24) then
+        Inc(LHourBuckets[23 - LHoursAgo]);
+
+      AddCount(LInboundMap, ExtractDomain(LItem.MailFrom));
+
+      if Length(LItem.Recipients) = 0 then
+        AddCount(LOutboundMap, Tx('chart_unknown'))
+      else
+        for LRecipient in LItem.Recipients do
+        begin
+          LKey := ExtractDomain(LRecipient);
+          AddCount(LOutboundMap, LKey);
+        end;
+    end;
+
+    SeriesHourly.Clear;
+    for I := 0 to 23 do
+      SeriesHourly.Add(LHourBuckets[I], FormatDateTime('hh', IncHour(LNowLocal, I - 23)));
+
+    SeriesInbound.Clear;
+    if LInboundMap.Count = 0 then
+      SeriesInbound.Add(1, Tx('chart_no_data'))
+    else
+      for LPair in LInboundMap do
+        SeriesInbound.Add(LPair.Value, LPair.Key);
+
+    SeriesOutbound.Clear;
+    if LOutboundMap.Count = 0 then
+      SeriesOutbound.Add(1, Tx('chart_no_data'))
+    else
+      for LPair in LOutboundMap do
+        SeriesOutbound.Add(LPair.Value, LPair.Key);
+  finally
+    LInboundMap.Free;
+    LOutboundMap.Free;
+  end;
+
+  LStats := FQueue.Stats;
+  LTotal := LStats.NewCount + LStats.InFlightCount + LStats.DeferredCount + LStats.DeadCount;
+  LProblematic := LStats.DeferredCount + LStats.DeadCount;
+
+  SeriesProblems.Clear;
+  if LTotal <= 0 then
+    SeriesProblems.Add(1, Tx('chart_no_data'))
+  else
+  begin
+    if LProblematic > 0 then
+      SeriesProblems.Add(LProblematic, Tx('chart_problematic'));
+    if (LTotal - LProblematic) > 0 then
+      SeriesProblems.Add(LTotal - LProblematic, Tx('chart_healthy'));
+  end;
+end;
+
+procedure TForm1.UpdateUi;
+var
+  LStats: TQueueStats;
+  LVersion: Int64;
+  LListenerRunning: Boolean;
+  LSendersRunning: Boolean;
+  LListenerError: Boolean;
+  LSendersError: Boolean;
+begin
+  LStats := FQueue.Stats;
+
+  LblQueueSizeValue.Caption := IntToStr(LStats.TotalCount);
+  LblInflightValue.Caption := IntToStr(LStats.InFlightCount);
+  LblDeferredValue.Caption := IntToStr(LStats.DeferredCount);
+  LblDeadValue.Caption := IntToStr(LStats.DeadCount);
+  LblOldestValue.Caption := IntToStr(LStats.OldestAgeSec);
+
+  LListenerRunning := FInbound.Status = lsListening;
+  LSendersRunning := FSenders.Status = ssRunning;
+  LListenerError := FInbound.Status = lsError;
+  LSendersError := FSenders.Status = ssError;
+
+  SetStatusValue(LblListenerStatusValue, ListenerStatusText, LListenerRunning, LListenerError);
+  SetStatusValue(LblSendersStatusValue, SenderStatusText, LSendersRunning, LSendersError);
+
+  LblListenerSessionsValue.Caption := IntToStr(FInbound.ActiveSessions);
+  LblListenerSessionsValue.Font.Style := [fsBold];
+  LblListenerSessionsValue.Font.Color := clBlack;
+
+  LblActiveSendersValue.Caption := IntToStr(FSenders.ActiveSenders);
+  LblActiveSendersValue.Font.Style := [fsBold];
+  LblActiveSendersValue.Font.Color := clBlack;
+
+  BtnStartListener.Visible := not LListenerRunning;
+  BtnStopListener.Visible := LListenerRunning;
+  BtnStartSenders.Visible := not LSendersRunning;
+  BtnStopSenders.Visible := LSendersRunning;
+
+  RefreshDashboardCharts;
+
+  LVersion := FLogger.Version;
+  if LVersion <> FLastLogVersion then
+  begin
+    FLogger.Snapshot(MemoLog.Lines);
+    FLastLogVersion := LVersion;
+    MemoLog.SelStart := MemoLog.GetTextLen;
+    MemoLog.Perform(EM_SCROLLCARET, 0, 0);
+  end;
+end;
+
+procedure TForm1.OnUiTimer(Sender: TObject);
+begin
+  UpdateUi;
+end;
+
+procedure TForm1.OnStartListener(Sender: TObject);
+begin
+  if not SaveUiToConfig then
+    Exit;
+  ApplyConfigToServices;
+
+  if FInbound.Status = lsListening then
+    FInbound.Stop;
+  if not FInbound.Start then
+    MessageDlg(Tx('msg_listener_start_fail') + sLineBreak + FInbound.LastError, mtError, [mbOK], 0)
+  else
+  begin
+    FConfig.StateListenerStarted := True;
+    FConfig.SaveToIni(FIniPath);
+  end;
+
+  UpdateUi;
+end;
+
+procedure TForm1.OnStopListener(Sender: TObject);
+begin
+  FInbound.Stop;
+  FConfig.StateListenerStarted := False;
+  FConfig.SaveToIni(FIniPath);
+  UpdateUi;
+end;
+
+procedure TForm1.OnStartSenders(Sender: TObject);
+begin
+  if not SaveUiToConfig then
+    Exit;
+  ApplyConfigToServices;
+
+  if FSenders.Status = ssRunning then
+    FSenders.Stop;
+  if not FSenders.Start then
+    MessageDlg(Tx('msg_senders_start_fail') + sLineBreak + FSenders.LastError, mtError, [mbOK], 0)
+  else
+  begin
+    FConfig.StateSendersStarted := True;
+    FConfig.SaveToIni(FIniPath);
+  end;
+
+  UpdateUi;
+end;
+
+procedure TForm1.OnStopSenders(Sender: TObject);
+begin
+  FSenders.Stop;
+  FConfig.StateSendersStarted := False;
+  FConfig.SaveToIni(FIniPath);
+  UpdateUi;
+end;
+
+procedure TForm1.OnFlush(Sender: TObject);
+begin
+  if FSenders.Status <> ssRunning then
+    FLogger.Add('WARN', Tx('msg_flush_no_senders'));
+  FSenders.FlushNow;
+  UpdateUi;
+end;
+
+procedure TForm1.OnPurgeDead(Sender: TObject);
+var
+  LDeleted: Integer;
+begin
+  if MessageDlg(Tx('msg_purge_confirm'), mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+
+  LDeleted := FQueue.PurgeDeadLetters;
+  FLogger.Add('QUEUE', Format('Dead-letter files removed: %d', [LDeleted]));
+  UpdateUi;
+end;
+
+procedure TForm1.OnSaveConfig(Sender: TObject);
+begin
+  if not SaveUiToConfig then
+    Exit;
+
+  SetLanguageFromConfig;
+  ApplyLanguage;
+  ApplyConfigToServices;
+  PersistRuntimeState;
+  FLogger.Add('CONFIG', 'Saved to ' + FIniPath);
+  UpdateUi;
+end;
+
+procedure TForm1.OnRestoreDefaults(Sender: TObject);
+var
+  LOutboundUserEnc: string;
+  LOutboundPassEnc: string;
+begin
+  if MessageDlg(Tx('msg_defaults_confirm'), mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+
+  LOutboundUserEnc := FConfig.OutboundAuthUserEnc;
+  LOutboundPassEnc := FConfig.OutboundAuthPasswordEnc;
+
+  FConfig.SetDefaults;
+  FConfig.OutboundAuthUserEnc := LOutboundUserEnc;
+  FConfig.OutboundAuthPasswordEnc := LOutboundPassEnc;
+
+  SetLanguageFromConfig;
+  LoadConfigToUi;
+  ApplyLanguage;
+  ApplyConfigToServices;
+  FConfig.SaveToIni(FIniPath);
+  FLogger.Add('CONFIG', 'Defaults restored (outbound credentials preserved)');
+  UpdateUi;
+end;
+
+procedure TForm1.OnResetInboundAuth(Sender: TObject);
+begin
+  EdInboundAuthUser.Clear;
+  EdInboundAuthPassword.Clear;
+  CbRequireInboundAuth.Checked := False;
+  FLogger.Add('CONFIG', 'Inbound auth fields reset in UI');
+end;
+
+procedure TForm1.OnClearLog(Sender: TObject);
+begin
+  FLogger.Clear;
+  UpdateUi;
+end;
+
+procedure TForm1.OnCopyLog(Sender: TObject);
+begin
+  Clipboard.AsText := MemoLog.Lines.Text;
+end;
+
+end.

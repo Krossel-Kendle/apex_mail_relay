@@ -9,6 +9,7 @@ type
   TRelayConfig = class
   private
     function IsValidIPv4(const AValue: string): Boolean;
+    function IsValidIPv4List(const AValue: string): Boolean;
   public
     InboundBindIP: string;
     InboundBindPort: Integer;
@@ -16,6 +17,7 @@ type
     InboundMaxMessageSizeMB: Integer;
     InboundSessionIdleTimeoutSec: Integer;
     InboundCommandTimeoutSec: Integer;
+    InboundRequireAuthCredentials: Boolean;
     InboundAuthUserEnc: string;
     InboundAuthPasswordEnc: string;
 
@@ -53,6 +55,12 @@ type
     procedure SaveToIni(const AFileName: string);
     function Validate(out AError: string): Boolean;
     function ResolveQueuePath(const ABaseDir: string): string;
+    procedure SetInboundAuthPlain(const AUser, APassword: string);
+    procedure GetInboundAuthPlain(out AUser, APassword: string);
+    function InboundAuthConfigured: Boolean;
+    procedure SetOutboundAuthPlain(const AUser, APassword: string);
+    procedure GetOutboundAuthPlain(out AUser, APassword: string);
+    function OutboundAuthConfigured: Boolean;
     procedure SetAuthPlain(const AUser, APassword: string);
     procedure GetAuthPlain(out AUser, APassword: string);
     function AuthConfigured: Boolean;
@@ -88,6 +96,7 @@ begin
   InboundMaxMessageSizeMB := 20;
   InboundSessionIdleTimeoutSec := 60;
   InboundCommandTimeoutSec := 30;
+  InboundRequireAuthCredentials := False;
   InboundAuthUserEnc := '';
   InboundAuthPasswordEnc := '';
 
@@ -153,6 +162,7 @@ begin
     InboundMaxMessageSizeMB := LIni.ReadInteger('Inbound', 'MaxMessageSizeMB', InboundMaxMessageSizeMB);
     InboundSessionIdleTimeoutSec := LIni.ReadInteger('Inbound', 'SessionIdleTimeoutSec', InboundSessionIdleTimeoutSec);
     InboundCommandTimeoutSec := LIni.ReadInteger('Inbound', 'CommandTimeoutSec', InboundCommandTimeoutSec);
+    InboundRequireAuthCredentials := LIni.ReadBool('Inbound', 'RequireAuthCredentials', InboundRequireAuthCredentials);
     InboundAuthUserEnc := EnsureEncrypted(LIni.ReadString('Inbound', 'AuthUser', InboundAuthUserEnc));
     InboundAuthPasswordEnc := EnsureEncrypted(LIni.ReadString('Inbound', 'AuthPassword', InboundAuthPasswordEnc));
 
@@ -202,6 +212,7 @@ begin
     LIni.WriteInteger('Inbound', 'MaxMessageSizeMB', InboundMaxMessageSizeMB);
     LIni.WriteInteger('Inbound', 'SessionIdleTimeoutSec', InboundSessionIdleTimeoutSec);
     LIni.WriteInteger('Inbound', 'CommandTimeoutSec', InboundCommandTimeoutSec);
+    LIni.WriteBool('Inbound', 'RequireAuthCredentials', InboundRequireAuthCredentials);
     LIni.WriteString('Inbound', 'AuthUser', InboundAuthUserEnc.Replace(#13, '').Replace(#10, ''));
     LIni.WriteString('Inbound', 'AuthPassword', InboundAuthPasswordEnc.Replace(#13, '').Replace(#10, ''));
 
@@ -261,6 +272,23 @@ begin
   Result := True;
 end;
 
+function TRelayConfig.IsValidIPv4List(const AValue: string): Boolean;
+var
+  LRawList: TArray<string>;
+  LItem: string;
+begin
+  Result := False;
+  LRawList := AValue.Replace(';', ',').Split([','], TStringSplitOptions.ExcludeEmpty);
+  if Length(LRawList) = 0 then
+    Exit;
+
+  for LItem in LRawList do
+    if not IsValidIPv4(Trim(LItem)) then
+      Exit;
+
+  Result := True;
+end;
+
 function TRelayConfig.Validate(out AError: string): Boolean;
 var
   LLang: TRelayLanguage;
@@ -273,9 +301,9 @@ begin
     Exit(False);
   end;
 
-  if not IsValidIPv4(InboundAllowedClientIP) then
+  if not IsValidIPv4List(InboundAllowedClientIP) then
   begin
-    AError := 'Inbound.AllowedClientIP must be a valid IPv4 address.';
+    AError := 'Inbound.AllowedClientIP must be a comma-separated list of IPv4 addresses.';
     Exit(False);
   end;
 
@@ -369,23 +397,84 @@ begin
 end;
 
 procedure TRelayConfig.SetAuthPlain(const AUser, APassword: string);
+begin
+  SetOutboundAuthPlain(AUser, APassword);
+end;
+
+procedure TRelayConfig.GetAuthPlain(out AUser, APassword: string);
+begin
+  GetOutboundAuthPlain(AUser, APassword);
+end;
+
+function TRelayConfig.AuthConfigured: Boolean;
+begin
+  Result := OutboundAuthConfigured;
+end;
+
+procedure TRelayConfig.SetInboundAuthPlain(const AUser, APassword: string);
 var
   LUser: string;
   LPassword: string;
 begin
   LUser := Trim(AUser).Replace(#13, '').Replace(#10, '');
   LPassword := Trim(APassword).Replace(#13, '').Replace(#10, '');
-  OutboundAuthUserEnc := EncryptToSingleLine(LUser);
-  OutboundAuthPasswordEnc := EncryptToSingleLine(LPassword);
+  if LUser = '' then
+    InboundAuthUserEnc := ''
+  else
+    InboundAuthUserEnc := EncryptToSingleLine(LUser);
+  if LPassword = '' then
+    InboundAuthPasswordEnc := ''
+  else
+    InboundAuthPasswordEnc := EncryptToSingleLine(LPassword);
 end;
 
-procedure TRelayConfig.GetAuthPlain(out AUser, APassword: string);
+procedure TRelayConfig.GetInboundAuthPlain(out AUser, APassword: string);
 begin
-  AUser := DecryptFromSingleLine(OutboundAuthUserEnc);
-  APassword := DecryptFromSingleLine(OutboundAuthPasswordEnc);
+  if Trim(InboundAuthUserEnc) = '' then
+    AUser := ''
+  else
+    AUser := DecryptFromSingleLine(InboundAuthUserEnc);
+  if Trim(InboundAuthPasswordEnc) = '' then
+    APassword := ''
+  else
+    APassword := DecryptFromSingleLine(InboundAuthPasswordEnc);
 end;
 
-function TRelayConfig.AuthConfigured: Boolean;
+function TRelayConfig.InboundAuthConfigured: Boolean;
+begin
+  Result := (Trim(InboundAuthUserEnc) <> '') and (Trim(InboundAuthPasswordEnc) <> '');
+end;
+
+procedure TRelayConfig.SetOutboundAuthPlain(const AUser, APassword: string);
+var
+  LUser: string;
+  LPassword: string;
+begin
+  LUser := Trim(AUser).Replace(#13, '').Replace(#10, '');
+  LPassword := Trim(APassword).Replace(#13, '').Replace(#10, '');
+  if LUser = '' then
+    OutboundAuthUserEnc := ''
+  else
+    OutboundAuthUserEnc := EncryptToSingleLine(LUser);
+  if LPassword = '' then
+    OutboundAuthPasswordEnc := ''
+  else
+    OutboundAuthPasswordEnc := EncryptToSingleLine(LPassword);
+end;
+
+procedure TRelayConfig.GetOutboundAuthPlain(out AUser, APassword: string);
+begin
+  if Trim(OutboundAuthUserEnc) = '' then
+    AUser := ''
+  else
+    AUser := DecryptFromSingleLine(OutboundAuthUserEnc);
+  if Trim(OutboundAuthPasswordEnc) = '' then
+    APassword := ''
+  else
+    APassword := DecryptFromSingleLine(OutboundAuthPasswordEnc);
+end;
+
+function TRelayConfig.OutboundAuthConfigured: Boolean;
 begin
   Result := (Trim(OutboundAuthUserEnc) <> '') and (Trim(OutboundAuthPasswordEnc) <> '');
 end;
